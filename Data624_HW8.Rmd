@@ -1,0 +1,436 @@
+---
+title: "Data624_HW8"
+author: "Alexis Mekueko"
+date: "11/13/2021"
+output: html_document
+---
+
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r load-packages, results='hide',warning=FALSE, message=FALSE, echo=FALSE}
+
+##library(tidyverse) #loading all library needed for this assignment
+
+
+library(knitr)
+library(dplyr)
+library(tidyr)
+
+library(reshape)
+
+library(stats)
+library(statsr)
+library(GGally)
+library(pdftools)
+library(correlation)
+
+library(lubridate)
+library(fpp3)
+library(urca)
+library(naniar)
+library(xts)
+library(tsibble)
+library(tseries)
+library(tsibbledata)
+library(forecast)
+library(caret)
+library(openxlsx)
+#Sys.setenv(R_ZIPCMD = "C:/Program Files/R/rtools40/bin/zip")
+library(readxl)
+#library(xlsx)
+library(zoo)
+set.seed(34332)
+#below is tool install rtools (we did successful)
+#writeLines('PATH="${RTOOLS40_HOME}\\usr\\bin;${PATH}"', con = "~/.Renviron")
+#install.packages("jsonlite", type = "source")
+#Sys.which("make")
+
+library(CORElearn)
+library(MASS)
+library(plyr)
+library(reshape2)
+library(lattice)
+library(ellipse)
+
+```
+
+
+[Github Link](https://github.com/asmozo24/Data624_HW8)
+<br>
+[Web Link](https://rpubs.com/amekueko/832187)
+
+
+
+
+7.2. Friedman (1991) introduced several benchmark data sets create by simulation. One of these simulations used the following nonlinear equation to create data:
+y = 10 sin(πx1x2) + 20(x3 − 0.5)2 + 10 x4 + 5 x5 + N(0, σ 2) where the x values are random variables uniformly distributed between [0, 1] (there are also 5 other non-informative variables also created in the simulation). The package mlbench contains a function called mlbench.friedman1 that simulates these data:
+
+
+```{r}
+
+library(mlbench)
+set.seed(200)
+trainingData <- mlbench.friedman1(200, sd = 1)
+## We convert the 'x'data from a matrix to a data frame
+## One reason is that this will give the columns names.
+
+trainingData$x <- data.frame(trainingData$x)
+
+## Look at the data using
+
+featurePlot(trainingData$x, trainingData$y)
+
+## or other methods.
+
+## This creates a list with a vector 'y'and a matrix
+## of predictors 'x'. Also simulate a large test set to
+## estimate the true error rate with good precision:
+
+testData <- mlbench.friedman1(5000, sd = 1)
+
+testData$x <- data.frame(testData$x)
+
+
+```
+
+Tune several models on these data. For example:
+
+```{r}
+
+library(caret)
+
+knnModel <- train(x = trainingData$x,
+                  y = trainingData$y,
+                  method = "knn",
+                  preProc = c("center", "scale"),
+                  tuneLength = 10)
+
+knnModel
+
+
+```
+
+
+```{r}
+knnPred <- predict(knnModel, newdata = testData$x)
+## The function 'postResample'can be used to get the test set
+## perforamnce values
+
+postResample(pred = knnPred, obs = testData$y)
+
+
+```
+
+```{r }
+
+varImp(knnModel)
+
+
+```
+
+
+Multivariate Adaptive Regression Splines (MARS)
+MARS models are in several packages, but the most extensive implementation is in the earth package. The MARS model using the nominal forward pass and pruning step can be called simply.
+
+```{r}
+library(earth)
+marsFit <- earth(trainingData$x, trainingData$y)
+marsFit
+
+```
+
+The summary method generates more extensive output.
+
+```{r}
+
+summary(marsFit)
+
+```
+
+
+To tune the model using external resampling, the train function can be used.
+```{r}
+
+# Define the candidate models to test
+marsGrid <- expand.grid(.degree = 1:2, .nprune = 2:38)
+# Fix the seed so that the results can be reproduced
+
+set.seed(1340)
+
+marsTuned <- train(trainingData$x, trainingData$y,
+                   method = "earth", 
+                   # Explicitly declare the candidate models to test
+                   tuneGrid = marsGrid,
+                   trControl = trainControl(method = "cv"))
+
+marsTuned
+
+```
+
+
+
+```{r}
+
+head(predict(marsTuned, testData$x))
+
+marsPred <- predict(marsTuned, testData$x)
+
+## The function 'postResample'can be used to get the test set
+## perforamnce values
+
+postResample(pred = marsPred, obs = testData$y)
+
+
+
+```
+
+There are two functions that estimate the importance of each predictor in the MARS model: evimp in the earth package and varImp in the caret package (although the latter calls the former):
+
+```{r}
+
+varImp(marsTuned)
+
+```
+
+Only X1 to X5 are important to the model according to Mars model.
+
+Neural Networks (nnet)
+To fit a regression model, the nnet function takes both the formula and non-formula interfaces. For regression, the linear relationship between the hidden units and the prediction can be used with the option linout = TRUE.
+
+```{r, warning=FALSE}
+
+tooHigh <- findCorrelation(cor(trainingData$x), cutoff = .75)
+
+trainXnnet <- trainingData$x[, -tooHigh]
+
+testXnnet <- testData$x[, -tooHigh]
+## Create a specific candidate set of models to evaluate:
+
+nnetGrid <- expand.grid(.decay = c(0, 0.01, .1),
+                        .size = c(1:10),## The next option is to use bagging (see the
+                        ## next chapter) instead of different random
+                        ## seeds.
+                        .bag = FALSE)
+
+set.seed(31500)
+
+nnetTuned <- train(trainingData$x, trainingData$y,
+                  method = "avNNet",
+                  tuneGrid = nnetGrid,
+                  trControl = trainControl(method = "cv"),
+                  ## Automatically standardize data prior to modeling
+                  ## and prediction
+                  preProc = c("center", "scale"),
+                  linout = TRUE,
+                  trace = FALSE,
+                  MaxNWts = 5 * (ncol(trainXnnet) + 1) + 10 + 1,
+                  maxit = 50)
+nnetTuned
+
+```
+
+
+```{r }
+nnetFit <- earth(trainingData$x, trainingData$y)
+nnetFit
+summary(nnetFit)
+```
+
+
+
+```{r}
+
+head(predict(nnetTuned, testData$x))
+
+nnetPred <- predict(marsTuned, testData$x)
+
+## The function 'postResample'can be used to get the test set
+## perforamnce values
+
+postResample(pred = nnetPred, obs = testData$y)
+
+
+
+```
+
+
+```{r }
+
+varImp(nnetTuned)
+
+```
+
+
+Which models appear to give the best performance? Does MARS select the informative predictors (those named X1–X5)?
+Mars model selected the informative predictors (X1-X5). Mars model appears to be the best with selecting predictors which are important for the model. It has better R-squared compared nnet and knn. Other model do not narrow important predictors to 5 like Mars. 
+
+
+7.5. Exercise 6.3 describes data for a chemical manufacturing process. Use the same data imputation, data splitting, and pre-processing steps as before and train several nonlinear regression models.
+
+```{r }
+set.seed(34392)
+library(AppliedPredictiveModeling)
+library(RANN)
+data(ChemicalManufacturingProcess)
+df <- ChemicalManufacturingProcess
+#sum(is.na(df))
+trans <- preProcess(df,"knnImpute")
+#sum(is.na(trans))
+pred <- predict(trans, df)
+pred <- pred %>% select_at(vars(-one_of(nearZeroVar(., names = TRUE))))
+
+trainDf <- createDataPartition(pred$Yield, p=0.8, time = 1, list = FALSE)
+trainX <-pred[trainDf, ]
+trainY <- pred$Yield[trainDf]
+#sum(is.na(trainX))
+plsTune <- train(trainX, trainY,
+
+ method = "pls",
+
+ ## The default tuning grid evaluates
+
+ ## components 1... tuneLength
+
+ tuneLength = 20,
+
+ trControl = trainControl(method = 'cv'),
+
+ preProc = c("center", "scale"))
+
+plsTune
+plot(plsTune)
+
+testX <- pred[-trainDf,]
+testY <- pred$Yield[-trainDf]
+postResample(pred = predict(plsTune, newdata=testX), obs = testY)
+
+
+```
+
+
+Neutral Network
+```{r, warning=FALSE}
+
+# tooHigh <- findCorrelation(cor(trainX), cutoff = .75)
+# 
+# trainXnnet <- trainX[, -tooHigh]
+# 
+# testXnnet <- testData$x[, -tooHigh]
+## Create a specific candidate set of models to evaluate:
+
+nnetGrid <- expand.grid(.decay = c(0, 0.01, .1),
+                        .size = c(1:10),## The next option is to use bagging (see the
+                        ## next chapter) instead of different random
+                        ## seeds.
+                        .bag = FALSE)
+
+set.seed(31500)
+nnetTuned <- train(Yield ~ ., trainX,
+                  method = "avNNet",
+                  tuneGrid = nnetGrid,
+                  trControl = trainControl(method = "cv"),
+                  ## Automatically standardize data prior to modeling
+                  ## and prediction
+                  preProc = c("center", "scale"),
+                  linout = TRUE,
+                  trace = FALSE,
+                  MaxNWts = 5 * (ncol(trainDf) + 1) + 5 + 1,
+                  maxit = 50)
+
+nnetTuned
+plot(nnetTuned)
+
+#postResample(pred = predict(nnetTuned, newdata=testX), obs = testY)
+
+
+```
+
+knn model
+```{r }
+
+knnModel <- train(x = trainX,
+                  y = trainY,
+                  method = "knn",
+                  preProc = c("center", "scale"),
+                  tuneLength = 10)
+
+knnModel
+plot(knnModel)
+postResample(pred = predict(knnModel, newdata=testX), obs = testY)
+
+
+```
+
+
+Mars model
+
+```{r}
+
+# Define the candidate models to test
+marsGrid <- expand.grid(.degree = 1:2, .nprune = 2:38)
+# Fix the seed so that the results can be reproduced
+
+set.seed(1340)
+
+marsTuned <- train(trainX, trainY,
+                   method = "earth", 
+                   # Explicitly declare the candidate models to test
+                   tuneGrid = marsGrid,
+                   trControl = trainControl(method = "cv"))
+
+marsTuned
+#plot(marsTuned)
+postResample(pred = predict(marsTuned, newdata=testX), obs = testY)
+
+
+```
+
+
+(a) Which nonlinear regression model gives the optimal resampling and test set performance?
+Mars model gives the optimal resampling and test set performance with RMSE = 5.086513e-16 .
+
+
+(b) Which predictors are most important in the optimal nonlinear regression model? Do either the biological or process variables dominate the list? How do the top ten important predictors compare to the top ten predictors from the optimal linear model?
+
+```{r }
+
+#varImp(marsTuned)
+#varImp(nnetTuned)
+varImp(plsTune)
+varImp(knnModel)
+
+```
+We got some issue with Mars model selection of most important predictors.
+plsTune model and knnModel predictors selection are about the same. Just like what we found in exercise  6.3 The Manufacturing variant among the predictors dominate the list. 
+
+(c) Explore the relationships between the top predictors and the response for the predictors that are unique to the optimal nonlinear regression model.
+Do these plots reveal intuition about the biological or process predictors and their relationship with yield?
+
+```{r }
+
+
+plot(trainX$ManufacturingProcess32, trainX$Yield , pch = 19)
+#lines(trainX$ManufacturingProcess32, trainX$Yield, type = "b", col = 3, lwd = 4, pch = 2 )
+
+
+```
+Very interesting!
+
+```{r }
+
+
+df <- data.frame(trainX$ManufacturingProcess32, trainX$ManufacturingProcess13, trainX$ManufacturingProcess36, trainX$ManufacturingProcess17, trainX$ManufacturingProcess09, trainX$BiologicalMaterial02	, trainX$BiologicalMaterial06, trainX$BiologicalMaterial08, trainX$BiologicalMaterial12, trainX$BiologicalMaterial03, trainX$Yield)
+
+x <- dplyr::select(df , -trainX.Yield)
+
+featurePlot( x, df$trainX.Yield)
+
+
+```
+
